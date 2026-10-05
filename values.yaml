@@ -4,8 +4,7 @@ deployment:
  replicas: 2
  pod_label: devops-maven-service-pod-label
  imagePullSecret: harbor-secret
- #image: wangxiaochun/pod-test
- image: registry.cn-beijing.aliyuncs.com/wangxiaochun/pod-test
+ image: registry.cn-beijing.aliyuncs.com/yangyang/pod-test
  imageTag: v0.1
  imagePullPolicy: IfNotPresent
  container_name: devops-maven-service-container
