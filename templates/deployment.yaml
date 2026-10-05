@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name:  {{ .Values.deployment.deployment_name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.deployment.pod_label }}
+spec:
+  replicas: {{ .Values.deployment.replicas }}
+  selector:
+    matchLabels:
+      app:  {{ .Values.deployment.pod_label }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.deployment.pod_label }}
+    spec:
+      nodeName: {{ .Values.deployment.nodeName }}
+      imagePullSecrets:
+        - name: {{ .Values.deployment.imagePullSecret }}
+      containers:
+        - name: {{ .Values.deployment.container_name }}
+          image: {{ .Values.deployment.image }}:{{ .Values.deployment.imageTag }}
+          imagePullPolicy: {{.Values.deployment.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.containerport }}
+          env:
+            - name: JAVA_OPTS
+              value: "-Xms256m -Xmx512m"
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.service.containerport }}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.service.containerport }}
+            initialDelaySeconds: 40
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: {{.Values.deployment.requests.cpu}}
+              memory: {{.Values.deployment.requests.memory}}
+            limits:
+              cpu: {{.Values.deployment.limits.cpu}}
+              memory: {{.Values.deployment.limits.memory}}

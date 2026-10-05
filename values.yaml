@@ -1,0 +1,33 @@
+deployment:
+ deployment_name: devops-maven-service
+ nodeName: k8s-master
+ replicas: 2
+ pod_label: devops-maven-service-pod-label
+ imagePullSecret: harbor-secret
+ #image: wangxiaochun/pod-test
+ image: registry.cn-beijing.aliyuncs.com/wangxiaochun/pod-test
+ imageTag: v0.1
+ imagePullPolicy: IfNotPresent
+ container_name: devops-maven-service-container
+ requests:
+   cpu: 100m
+   memory: 256Mi
+ limits:
+   cpu: 500m
+   memory: 768Mi
+
+service:
+ service_name: devops-maven-service
+ service_label: devops-maven-service-service-label
+ service_type: NodePort
+ port: 8080
+ containerport: 8080
+ targetport: 8080
+ nodeport: 30080
+
+ingress:
+  ingress_name: devops-maven-service-ingress
+  enabled: true
+  ingress_label: devops-maven-service-ingress-label
+  ingressClassName: cilium
+  host: demo.devops.local
