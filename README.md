@@ -730,7 +730,7 @@ Agent 由三个容器组成的 Pod 提供（kubernetes 插件动态创建）：
 checkout([$class: 'GitSCM',
     branches: [[name: 'main']],
     userRemoteConfigs: [[credentialsId: credentialsId,
-        url: 'https://github.com/ouyangkun-sre/devops-maven-service-helm.git']],
+        url: 'http://192.168.100.66/dev11/devops-maven-service-helm.git']],
     extensions: [[$class: 'RelativeTargetDirectory',
         relativeTargetDir: 'devops-maven-service-helm']]
 ])

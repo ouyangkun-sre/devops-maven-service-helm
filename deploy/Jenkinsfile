@@ -31,7 +31,7 @@ def imageName = "demo"
 // 应用部署信息（Deploy / RollBack 共用）
 def namespace = "devops"
 def appName = "devops-maven-service"
-// def chartGitURL = "https://github.com/ouyangkun-sre/devops-maven-service-helm.git"
+// def chartGitURL = "http://192.168.100.66/dev11/devops-maven-service-helm.git"
 def chartBranch = "main"
 
 // 书写流水线
