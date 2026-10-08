@@ -676,3 +676,94 @@ myharbor/devops-maven-service	0.1.0        	1.10.0     	A Helm chart for Kuberne
 [root@master1 ~]#cat harbor-wang-org.crt >> /etc/ssl/certs/ca-certificates.crt
 [root@master1 ~]#cat ca.crt >> /etc/ssl/certs/ca-certificates.crt(可不做)
 ```
+
+# CICD实现
+
+基于 Jenkins Pipeline + Helm 实现标准的 CI/CD 流水线，Jenkinsfile 位于 `deploy/Jenkinsfile`
+
+## 整体流程
+
+```bash
+Getcode → Build → UnitTest → Build Image → Deploy → 邮件通知
+                               (kaniko)     (Helm)
+```
+
+- **Getcode**：Git 拉取应用源码（共享库 `GetCode`）
+- **Build**：Maven 打包 `target/*.jar`
+- **UnitTest**：收集 Surefire 测试报告（`junit 'target/surefire-reports/*.xml'`）
+- **Build Image**：kaniko 无 Docker Daemon 构建镜像并推送 Harbor，tag 为 `${BUILD_NUMBER}` 和 `latest`
+- **Deploy**：`helm upgrade --install` 部署/升级
+- **RollBack**：勾选参数后跳过构建，只执行 `helm rollback`
+
+## Jenkins Agent Pod
+
+Agent 由三个容器组成的 Pod 提供（kubernetes 插件动态创建）：
+
+| 容器 | 镜像 | 作用 |
+| --- | --- | --- |
+| jnlp | jenkins/inbound-agent:latest-jdk21 | 主容器：代码获取、构建、测试 |
+| kaniko | gcr.io/kaniko-project/executor:debug | 构建并推送镜像，无需 Docker Daemon |
+| kubectl | alpine/k8s:1.31.13 | helm 部署 / 回滚（自带 helm 和 kubectl） |
+
+挂载说明：
+
+- `buildtools` PVC 挂载到 jnlp 的 `/home/jenkins/buildtools`，提供 maven/gradle/ant/npm 构建工具
+- `harbor-secret` 同时作为 Pod 的 `imagePullSecrets` 和 kaniko 的 `/kaniko/.docker/config.json`（推送凭据）
+- workspace 由插件自动挂载到各容器 `/home/jenkins/agent`，构建产物与 chart 目录容器间共享
+
+## Job 参数
+
+| 参数 | 说明 |
+| --- | --- |
+| buildType | 构建工具类型：maven / gradle / ant / npm |
+| branchName | 应用代码分支 |
+| credentialsId | Git 拉取凭据 |
+| gitHttpURL | 应用代码仓库地址 |
+| uploadType | Nexus 上传类型（NexusUpload 阶段未启用） |
+| ROLLBACK | 勾选后跳过全部构建阶段，仅执行回滚 |
+
+## Deploy：helm upgrade --install
+
+流水线先克隆 chart 仓库到 workspace（复用 Git 凭据）：
+
+```groovy
+checkout([$class: 'GitSCM',
+    branches: [[name: 'main']],
+    userRemoteConfigs: [[credentialsId: credentialsId,
+        url: 'https://github.com/ouyangkun-sre/devops-maven-service-helm.git']],
+    extensions: [[$class: 'RelativeTargetDirectory',
+        relativeTargetDir: 'devops-maven-service-helm']]
+])
+```
+
+然后在 kubectl 容器内执行部署：
+
+```bash
+helm upgrade --install devops-maven-service ./devops-maven-service-helm \
+  --namespace devops --create-namespace \
+  --set deployment.image=192.168.100.70:81/test/demo \
+  --set deployment.imageTag=${BUILD_NUMBER} \
+  --set deployment.imagePullPolicy=IfNotPresent \
+  --atomic
+```
+
+- `upgrade --install`：release 不存在时安装，存在时原地升级，无需区分首次部署和日常发版
+- `--atomic`：内含 `--wait`，等待滚动更新完成；失败自动回滚到上一版本，保证集群始终处于可用状态
+
+## RollBack：helm rollback
+
+```bash
+helm history -n devops devops-maven-service
+helm rollback -n devops devops-maven-service
+kubectl -n devops rollout status deployment/devops-maven-service --timeout=120s
+```
+
+回滚依赖集群内 release 历史（helm 自动维护），无需本地 chart，不指定版本号默认回滚到上一版本
+
+## 前置条件
+
+- ServiceAccount `jenkins-deployer`：具备 devops 命名空间的部署权限
+- Secret `harbor-secret`：Harbor 拉取/推送凭据（类型 `kubernetes.io/dockerconfigjson`）
+- PVC `jenkins-buildtools-pvc`：构建工具目录
+- 注意：若集群中残留旧的裸 Deployment/Service/Ingress（非 Helm 管理），与 release 资源同名会导致 Helm 接管时报 `field is immutable` 错误，首次切换到 Helm 部署前需先 `kubectl delete` 清理
+

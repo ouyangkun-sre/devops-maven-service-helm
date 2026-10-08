@@ -1,0 +1,266 @@
+#!groovy
+@Library("jenkins-share-library@main") _
+
+// 导入库的方法
+def mytools = new org.devops.build()
+def getcode = new org.devops.Getcode()
+def toemail = new org.devops.toemail()
+def sonar = new org.devops.sonarqube()
+def nexus = new org.devops.nexus()
+
+// 定义构建工具类型与路径map（buildtools PVC 挂载到 /home/jenkins/buildtools）
+def buildTools = [
+        'maven':"/home/jenkins/buildtools/apache-maven-3.9.16",
+        'gradle':"/home/jenkins/buildtools/gradle-9.7.0",
+        'ant':"/home/jenkins/buildtools/apache-ant-1.10.18",
+        'npm':"/home/jenkins/buildtools/node-v18.20.6-linux-x64-glibc-217"
+    ]
+
+// 定义全局变量
+def email_user = "483555203@qq.com"
+String buildType = "${env.buildType}"
+String branchName = "${env.branchName}"
+String credentialsId = "${env.credentialsId}"
+String gitHttpURL = "${env.gitHttpURL}"
+String uploadType = "${env.uploadType}"
+
+// 镜像仓库配置
+def registry = "192.168.100.70:81/test"
+def imageName = "demo"
+
+// 应用部署信息（Deploy / RollBack 共用）
+def namespace = "devops"
+def appName = "devops-maven-service"
+def chartGitURL = "https://github.com/ouyangkun-sre/devops-maven-service-helm.git"
+def chartBranch = "main"
+
+// 书写流水线
+pipeline{
+    agent{
+        kubernetes {
+            cloud 'Dev01-kubernetes'
+            // 生产 Agent Pod：jnlp(Agent) + kaniko + kubectl
+            yaml '''
+---
+apiVersion: v1
+kind: Pod
+
+metadata:
+  labels:
+    k8s-app: jenkinsagent
+  name: jenkinsagent
+  namespace: devops
+
+spec:
+  # Agent Pod 使用的 ServiceAccount，需具备 devops 命名空间部署权限
+  serviceAccountName: jenkins-deployer
+  imagePullSecrets:
+    - name: harbor-secret
+  containers:
+    - name: jnlp
+      image: jenkins/inbound-agent:latest-jdk21
+      imagePullPolicy: IfNotPresent
+      resources:
+        limits:
+          cpu: 1000m
+          memory: 2Gi
+        requests:
+          cpu: 500m
+          memory: 512Mi
+      volumeMounts:
+        - name: buildtools
+          mountPath: /home/jenkins/buildtools
+          readOnly: true
+    # kaniko：集群内直接构建并推送镜像，无需 Docker Daemon
+    - name: kaniko
+      image: gcr.io/kaniko-project/executor:debug
+      imagePullPolicy: IfNotPresent
+      command:
+        - sleep
+      args:
+        - "9999999"
+      resources:
+        limits:
+          cpu: 1000m
+          memory: 2Gi
+        requests:
+          cpu: 500m
+          memory: 512Mi
+      volumeMounts:
+        # workspace 由插件自动挂载到 /home/jenkins/agent，与 jnlp 共享
+        # Harbor 推送凭据
+        - name: docker-config
+          mountPath: /kaniko/.docker
+
+    # helm：渲染 chart 并部署 / 回滚（alpine/k8s 自带 helm 和 kubectl）
+    - name: kubectl
+      image: alpine/k8s:1.31.13
+      imagePullPolicy: IfNotPresent
+      command:
+        - sleep
+      args:
+        - "9999999"
+      resources:
+        limits:
+          cpu: 500m
+          memory: 512Mi
+        requests:
+          cpu: 100m
+          memory: 128Mi
+      # workspace 由插件自动挂载到 /home/jenkins/agent
+
+  volumes:
+    - name: buildtools
+      persistentVolumeClaim:
+        claimName: jenkins-buildtools-pvc
+
+    - name: docker-config
+      secret:
+        secretName: harbor-secret
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+'''
+        }
+    }
+    options {
+        skipDefaultCheckout true
+    }
+    parameters {
+        // 勾选后只执行回滚（回滚到上一版本），跳过构建与部署
+        booleanParam(name: 'ROLLBACK', defaultValue: false, description: '是否执行回滚')
+    }
+    stages{
+        stage("Getcode"){
+            when { expression { return params.ROLLBACK != true } }
+            steps{
+                echo "========executing Getcode========"
+                container('jnlp'){
+                    script{
+                        getcode.GetCode("git",branchName,credentialsId,gitHttpURL)
+                    }
+                }
+            }
+        }
+        stage("Build"){
+            when { expression { return params.ROLLBACK != true } }
+            steps{
+                echo "========executing Build========"
+                container('jnlp'){
+                    script{ 
+                        mytools.Build(buildTools,buildType)
+                    }
+                }
+            }
+        }
+        stage("UnitTest"){
+            when { expression { return params.ROLLBACK != true } }
+            steps{
+                echo "========executing UnitTest========"
+                container('jnlp'){
+                    script{
+                        mytools.UnitTest(buildTools,buildType)
+                    }
+                }
+            }
+            post {
+                success {
+                    script{
+                        junit 'target/surefire-reports/*.xml' // Maven 测试结束后，把 Surefire 生成的 XML 测试报告交给 Jenkins。
+                    }
+                }
+            }
+        }
+        stage("Build Image"){
+            when { expression { return params.ROLLBACK != true } }
+            steps{
+                echo "========executing Build Image (kaniko)========"
+                container('kaniko'){
+                    script{
+                        // 复用 Build 阶段产物 target/*.jar 与 Dockerfile，打包镜像并推送 Harbor
+                        // 注意：Dockerfile 为单阶段（只 COPY target/*.jar），必须用 dir://. 上下文；
+                        // 换成 git://... 时 target/ 不存在，会构建失败
+                        sh """
+                            /kaniko/executor \
+                              --context=dir://. \
+                              --dockerfile=Dockerfile \
+                              --destination=${registry}/${imageName}:${env.BUILD_NUMBER} \
+                              --destination=${registry}/${imageName}:latest \
+                              --insecure \
+                              --skip-tls-verify \
+                              --cache=true
+                        """
+                    }
+                }
+            }
+        }
+        stage("Deploy"){
+            when { expression { return params.ROLLBACK != true } }
+            steps{
+                echo "========executing Deploy (helm)========"
+                // 拉取 chart 仓库到 workspace/devops-maven-service-helm，与 jnlp 共享
+                container('jnlp'){
+                    checkout([$class: 'GitSCM',
+                        branches: [[name: chartBranch]],
+                        userRemoteConfigs: [[credentialsId: credentialsId, url: chartGitURL]],
+                        extensions: [[$class: 'RelativeTargetDirectory', relativeTargetDir: 'devops-maven-service-helm']]
+                    ])
+                }
+                // helm upgrade --install：首次安装，之后原地升级；--atomic 失败自动回滚
+                container('kubectl'){
+                    sh """
+                        helm upgrade --install ${appName} ./devops-maven-service-helm \
+                          --namespace ${namespace} --create-namespace \
+                          --set deployment.image=${registry}/${imageName} \
+                          --set deployment.imageTag=${env.BUILD_NUMBER} \
+                          --set deployment.imagePullPolicy=IfNotPresent \
+                          --atomic
+                    """
+                }
+            }
+        }
+        stage("RollBack"){
+            // 仅当构建时勾选 ROLLBACK 参数才执行；普通构建自动跳过
+            // helm rollback 依赖集群内 release 历史，无需本地 chart
+            when { expression { return params.ROLLBACK == true } }
+            steps{
+                container('kubectl'){
+                    sh """
+                        helm history -n ${namespace} ${appName}
+                        helm rollback -n ${namespace} ${appName}
+                        kubectl -n ${namespace} rollout status deployment/${appName} --timeout=120s
+                    """
+                }
+            }
+        }
+        stage("webhook test"){
+            steps{
+                script{
+                    echo "hello 我完成了Webhook"
+                }
+            }
+        }
+		// stage("NexusUpload"){
+		// 	steps{
+		// 		script{
+		// 			nexus.main(uploadType)
+		// 		}
+		// 	}
+		// }
+        // stage("CodeScan"){
+        //     steps{
+        //         script{
+        //            sonar.SonarScan('test', "${JOB_NAME}", branchName, 'src')
+
+        //         }
+        //     }
+        // }
+    }
+    post{
+        success{
+            script {
+                toemail.Email(email_user,"SUCCESS")
+            }
+        }
+    }
+}

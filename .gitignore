@@ -1,8 +1,11 @@
+# IDE
 .idea/
 *.iml
-
-REDMI.assets/
+.vscode/
 
 # 系统
 .DS_Store
 Thumbs.db
+
+# helm 打包产物
+*.tgz

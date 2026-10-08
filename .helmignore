@@ -21,3 +21,10 @@
 .idea/
 *.tmproj
 .vscode/
+
+# Common build artifacts
+assets/
+# CI 与源码包，不属于 chart
+deploy/
+*.zip
+
