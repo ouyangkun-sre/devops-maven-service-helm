@@ -739,7 +739,7 @@ checkout([$class: 'GitSCM',
 
 ```bash
 helm upgrade --install devops-maven-service ./devops-maven-service-helm \
-  --namespace devops --create-namespace \
+  --namespace devops \
   --set deployment.image=192.168.100.70:81/test/demo \
   --set deployment.imageTag=${BUILD_NUMBER} \
   --set deployment.imagePullPolicy=IfNotPresent \
@@ -760,9 +760,10 @@ helm rollback -n devops devops-maven-service --wait --timeout 120s
 
 ## 前置条件
 
-- ServiceAccount `jenkins-deployer`：具备 devops 命名空间的部署权限
 - Secret `harbor-secret`：Harbor 拉取/推送凭据（类型 `kubernetes.io/dockerconfigjson`）
 - PVC `jenkins-buildtools-pvc`：构建工具目录
+- RBAC 需手工预先创建：`kubectl apply -f deploy/rbac.yaml`。Role 必须包含 `secrets` 权限，因为 Helm 3 把 release 历史存成 `sh.helm.release.v1.*` Secret，缺它时 `helm upgrade` 连资源都不会创建就先报 `secrets is forbidden`。这份清单刻意放在 `deploy/` 而不是 `templates/`：它描述的正是「运行 helm 的账号」本身，交给 helm 管理会形成循环依赖
+- `devops` 命名空间需集群预先存在，流水线不再使用 `--create-namespace`（`namespaces` 是集群级资源，namespaced Role 无法授予其 create 权限）
 - 注意：若集群中残留旧的裸 Deployment/Service/Ingress（非 Helm 管理），与 release 资源同名会导致 Helm 接管时报 `field is immutable` 错误，首次切换到 Helm 部署前需先 `kubectl delete` 清理
 - 注意：资源名与标签渲染为 `<release 名>-<values 里的角色名>`，当前依次是 Deployment `devops-maven-service-app`、Service `devops-maven-service-svc`、Ingress `devops-maven-service-ingress`，同一 namespace 装第二个 release 不会再撞名
 - 注意：Deployment/Service 相比旧版换了名字（旧名 `devops-maven-service`），而新 Service 仍要占用同一个 `nodePort: 30080`。`helm upgrade` 是先建新、再删旧，旧 Service 未释放端口前新建会被拒绝 `provided port is already allocated`，接着被 `--atomic` 回滚。因此首次切换必须先 `helm uninstall -n devops devops-maven-service`，之后名字稳定就不用再删

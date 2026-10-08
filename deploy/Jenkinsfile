@@ -206,10 +206,12 @@ spec:
                     ])
                 }
                 // helm upgrade --install：首次安装，之后原地升级；--atomic 失败自动回滚
+                // 不带 --create-namespace：namespaces 是集群级资源，namespaced Role 给不出 create 权限，
+                // devops 由集群预先创建（见 deploy/rbac.yaml）
                 container('kubectl'){
                     sh """
                         helm upgrade --install ${appName} ./devops-maven-service-helm \
-                          --namespace ${namespace} --create-namespace \
+                          --namespace ${namespace} \
                           --set deployment.image=${registry}/${imageName} \
                           --set deployment.imageTag=${env.BUILD_NUMBER} \
                           --set deployment.imagePullPolicy=IfNotPresent \
