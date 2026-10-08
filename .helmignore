@@ -27,4 +27,13 @@ assets/
 # CI 与源码包，不属于 chart
 deploy/
 *.zip
+# Java 工程内容只在 git 里，chart 包不需要打包
+src/
+target/
+pom.xml
+mvnw
+mvnw.cmd
+.mvn/
+Dockerfile
+.dockerignore
 

@@ -1,19 +1,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name:  {{ .Values.deployment.deployment_name }}
+  name: {{ .Release.Name }}-{{ .Values.deployment.deployment_name }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app: {{ .Values.deployment.pod_label }}
+    app: {{ .Release.Name }}-{{ .Values.deployment.pod_label }}
 spec:
   replicas: {{ .Values.deployment.replicas }}
   selector:
     matchLabels:
-      app:  {{ .Values.deployment.pod_label }}
+      app: {{ .Release.Name }}-{{ .Values.deployment.pod_label }}
   template:
     metadata:
       labels:
-        app: {{ .Values.deployment.pod_label }}
+        app: {{ .Release.Name }}-{{ .Values.deployment.pod_label }}
     spec:
       nodeName: {{ .Values.deployment.nodeName }}
       imagePullSecrets:
@@ -21,7 +21,7 @@ spec:
       containers:
         - name: {{ .Values.deployment.container_name }}
           image: {{ .Values.deployment.image }}:{{ .Values.deployment.imageTag }}
-          imagePullPolicy: {{.Values.deployment.imagePullPolicy }}
+          imagePullPolicy: {{ .Values.deployment.imagePullPolicy }}
           ports:
             - containerPort: {{ .Values.service.containerport }}
           env:
@@ -39,8 +39,8 @@ spec:
             periodSeconds: 20
           resources:
             requests:
-              cpu: {{.Values.deployment.requests.cpu}}
-              memory: {{.Values.deployment.requests.memory}}
+              cpu: {{ .Values.deployment.requests.cpu }}
+              memory: {{ .Values.deployment.requests.memory }}
             limits:
-              cpu: {{.Values.deployment.limits.cpu}}
-              memory: {{.Values.deployment.limits.memory}}
+              cpu: {{ .Values.deployment.limits.cpu }}
+              memory: {{ .Values.deployment.limits.memory }}

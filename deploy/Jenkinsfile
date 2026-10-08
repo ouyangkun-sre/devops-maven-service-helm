@@ -29,10 +29,9 @@ def registry = "192.168.100.70:81/test"
 def imageName = "demo"
 
 // 应用部署信息（Deploy / RollBack 共用）
+// chart 与应用源码同仓库，分支跟随构建参数 branchName，无需单独配置
 def namespace = "devops"
 def appName = "devops-maven-service"
-// def chartGitURL = "http://192.168.100.66/dev11/devops-maven-service-helm.git"
-def chartBranch = "main"
 
 // 书写流水线
 pipeline{
@@ -198,10 +197,10 @@ spec:
             when { expression { return params.ROLLBACK != true } }
             steps{
                 echo "========executing Deploy (helm)========"
-                // 拉取 chart 仓库到 workspace/devops-maven-service-helm，与 jnlp 共享
+                // 同仓库同分支，把 chart 拉到 workspace/devops-maven-service-helm，与 jnlp 共享
                 container('jnlp'){
                     checkout([$class: 'GitSCM',
-                        branches: [[name: chartBranch]],
+                        branches: [[name: branchName]],
                         userRemoteConfigs: [[credentialsId: credentialsId, url: gitHttpURL]],
                         extensions: [[$class: 'RelativeTargetDirectory', relativeTargetDir: 'devops-maven-service-helm']]
                     ])
@@ -222,13 +221,13 @@ spec:
         stage("RollBack"){
             // 仅当构建时勾选 ROLLBACK 参数才执行；普通构建自动跳过
             // helm rollback 依赖集群内 release 历史，无需本地 chart
+            // --wait 交给 helm 等滚动更新完成，避免在这里硬编码 Deployment 资源名
             when { expression { return params.ROLLBACK == true } }
             steps{
                 container('kubectl'){
                     sh """
                         helm history -n ${namespace} ${appName}
-                        helm rollback -n ${namespace} ${appName}
-                        kubectl -n ${namespace} rollout status deployment/${appName} --timeout=120s
+                        helm rollback -n ${namespace} ${appName} --wait --timeout 120s
                     """
                 }
             }

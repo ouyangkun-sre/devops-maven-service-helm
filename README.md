@@ -724,13 +724,12 @@ Agent 由三个容器组成的 Pod 提供（kubernetes 插件动态创建）：
 
 ## Deploy：helm upgrade --install
 
-流水线先克隆 chart 仓库到 workspace（复用 Git 凭据）：
+本仓库既是应用源码又是 chart，所以 chart 按构建参数 `branchName` 从同一仓库再克隆一份到 workspace（复用 Git 凭据），发版分支上的 chart 改动立即生效：
 
 ```groovy
 checkout([$class: 'GitSCM',
-    branches: [[name: 'main']],
-    userRemoteConfigs: [[credentialsId: credentialsId,
-        url: 'http://192.168.100.66/dev11/devops-maven-service-helm.git']],
+    branches: [[name: branchName]],
+    userRemoteConfigs: [[credentialsId: credentialsId, url: gitHttpURL]],
     extensions: [[$class: 'RelativeTargetDirectory',
         relativeTargetDir: 'devops-maven-service-helm']]
 ])
@@ -754,11 +753,10 @@ helm upgrade --install devops-maven-service ./devops-maven-service-helm \
 
 ```bash
 helm history -n devops devops-maven-service
-helm rollback -n devops devops-maven-service
-kubectl -n devops rollout status deployment/devops-maven-service --timeout=120s
+helm rollback -n devops devops-maven-service --wait --timeout 120s
 ```
 
-回滚依赖集群内 release 历史（helm 自动维护），无需本地 chart，不指定版本号默认回滚到上一版本
+回滚依赖集群内 release 历史（helm 自动维护），无需本地 chart，不指定版本号默认回滚到上一版本。`--wait` 交给 helm 等 Pod 就绪，不再用 kubectl 写死 Deployment 名（资源名带 release 前缀，写死容易错）
 
 ## 前置条件
 
@@ -766,4 +764,6 @@ kubectl -n devops rollout status deployment/devops-maven-service --timeout=120s
 - Secret `harbor-secret`：Harbor 拉取/推送凭据（类型 `kubernetes.io/dockerconfigjson`）
 - PVC `jenkins-buildtools-pvc`：构建工具目录
 - 注意：若集群中残留旧的裸 Deployment/Service/Ingress（非 Helm 管理），与 release 资源同名会导致 Helm 接管时报 `field is immutable` 错误，首次切换到 Helm 部署前需先 `kubectl delete` 清理
+- 注意：资源名与标签渲染为 `<release 名>-<values 里的角色名>`，当前依次是 Deployment `devops-maven-service-app`、Service `devops-maven-service-svc`、Ingress `devops-maven-service-ingress`，同一 namespace 装第二个 release 不会再撞名
+- 注意：Deployment/Service 相比旧版换了名字（旧名 `devops-maven-service`），而新 Service 仍要占用同一个 `nodePort: 30080`。`helm upgrade` 是先建新、再删旧，旧 Service 未释放端口前新建会被拒绝 `provided port is already allocated`，接着被 `--atomic` 回滚。因此首次切换必须先 `helm uninstall -n devops devops-maven-service`，之后名字稳定就不用再删
 

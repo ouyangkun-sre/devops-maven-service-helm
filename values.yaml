@@ -1,8 +1,9 @@
 deployment:
- deployment_name: devops-maven-service
+ # 资源名与标签渲染为 <release 名>-<这里的名字>，所以只写角色名，别再重复应用名
+ deployment_name: app
  nodeName: k8s-master
  replicas: 2
- pod_label: devops-maven-service-pod-label
+ pod_label: app
  imagePullSecret: harbor-secret
  image: registry.cn-beijing.aliyuncs.com/yangyang/pod-test
  imageTag: v0.1
@@ -16,8 +17,8 @@ deployment:
    memory: 768Mi
 
 service:
- service_name: devops-maven-service
- service_label: devops-maven-service-service-label
+ service_name: svc
+ service_label: svc
  service_type: NodePort
  port: 8080
  containerport: 8080
@@ -25,8 +26,8 @@ service:
  nodeport: 30080
 
 ingress:
-  ingress_name: devops-maven-service-ingress
+  ingress_name: ingress
   enabled: true
-  ingress_label: devops-maven-service-ingress-label
+  ingress_label: ingress
   ingressClassName: cilium
   host: demo.devops.local
